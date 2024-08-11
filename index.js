@@ -8,6 +8,12 @@ const port = process.env.PORT || 5000;
 
 // middleware
 app.use(cors());
+
+app.use(cors({
+  origin: ['http://localhost:5173' , 'https://bistro-boss-da37b.web.app']
+}));
+
+
 app.use(express.json());
 
 
@@ -30,7 +36,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const usersCollection = client.db("bistroDB").collection("users");
     const menuCollection = client.db("bistroDB").collection("menu");
@@ -138,9 +144,7 @@ async function run() {
 
     app.delete('/users/:id',verifyToken,verifyAdmin, async (req, res) => {
       const id = req.params.id;
-      const query = {
-        _id: new ObjectId(id)
-      }
+      const query = { _id: new ObjectId(id)}
       const result = await usersCollection.deleteOne(query);
       res.send(result);
     })
@@ -153,7 +157,7 @@ async function run() {
       res.send(result);
     })
 
-    app.get('/menu/:id' , async (req , res) =>{
+    app.get('/menu/:id', async (req , res) =>{
       const id = req.params.id;
       const query = { _id: new ObjectId(id) }
       const result = await menuCollection.findOne(query);
@@ -165,6 +169,26 @@ async function run() {
       const result = await menuCollection.insertOne(item);
       res.send(result);
     });
+
+    app.patch('/menu/:id' , async (req,res) => {
+      const item = req.body;
+      console.log(item)
+      const id = req.params.id;
+      // console.log(id)
+      const filter = { _id : new ObjectId(id) }
+      console.log(filter)
+      const updateDoc = {
+        $set:{
+          name: item.name,
+          category: item.category,
+          price: item.price,
+          recipe: item.recipe,
+          image: item.image
+        }
+      }
+      const result = await menuCollection.updateOne(filter, updateDoc)
+      res.send(result);
+    })
 
     app.delete('/menu/:id', verifyToken,verifyAdmin, async (req,res) =>{
       const id = req.params.id;
@@ -205,9 +229,7 @@ async function run() {
     });
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({
-      ping: 1
-    });
+    // await client.db("admin").command({ping: 1});
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
