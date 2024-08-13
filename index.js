@@ -3,8 +3,21 @@ const app = express();
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 require('dotenv').config()
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
+
+const formData = require('form-data');
+const Mailgun = require('mailgun.js');
+const mailgun = new Mailgun(formData);
+
+const mg = mailgun.client({
+  username: 'api', 
+  key: process.env.MAIL_GUN_API_KEY
+});
+
+
 const port = process.env.PORT || 5000;
+
 
 
 // middleware
@@ -265,13 +278,129 @@ async function run() {
         $in: payment.cartIds.map(id => new ObjectId(id))
       }}
       const deleteResult = await cartCollection.deleteMany(query);
-      res.send({paymentResult , deleteResult});
+
+      //send user email about payment confirmation
+      
+      mg.messages.create(process.env.MAIL_SENDING_DOMAIN, {
+        from: "Excited User <mailgun@sandbox2fe48daa6c374add824dff49665a381f.mailgun.org>",
+        to: ["zaheenrakib0@gmail.com"],
+        subject: "Bistro Boss Order Confirmation",
+        text: "Testing some Mailgun awesomness!",
+        html: `<div>
+        <h2>Thanks you for your Order</h2>
+        <h4>Your Transaction Id: <strogn>
+        ${payment.transactionId}
+        </strogn> </h4>
+        <p>We Would like to get your feedback about the food</p>
+        </div>`
+      })
+      .then(msg => console.log(msg)) // logs response data
+      .catch(err => console.error(err)); // logs any error
+
+
+            res.send({paymentResult , deleteResult});
+          })
+
+
+
+    // stats or analytics
+    app.get('/admin-stats', verifyToken,verifyAdmin, async(req,res) => {
+      const users = await usersCollection.estimatedDocumentCount();
+      const menuItems = await menuCollection.estimatedDocumentCount();
+      const orders = await paymentCollection.estimatedDocumentCount();
+
+      // this is not the best way
+      // const payments = await paymentCollection.find().toArray();
+      // const revenue = payments.reduce((total,payment) => total + payment.price,0);
+
+      const result = await paymentCollection.aggregate([
+        {
+          $group:{
+            _id: null,
+            totalRevenue:{
+              $sum: '$price'
+            }
+          } 
+        }
+      ]).toArray();
+
+      const revenue = result.length > 0 ? result[0].totalRevenue : 0;
+
+      res.send({
+        users,
+        menuItems,
+        orders,
+        revenue
+      })
+    });
+
+    //oders status
+    /**
+     * --------------------------------
+     *             NON-Efficient Way
+     * --------------------------------
+     * 1.load all payments
+     * 2. For every menuItemsIds (Whice is an array), go find the item from menu collection
+     * 3. for every item in the menu callection that you found from a payment entry (document)    
+     */
+
+    //useing aggregate pipeline
+    app.get('/order-stats', verifyToken,verifyAdmin, async (req , res) => {
+      const result = await paymentCollection.aggregate([
+        {
+          $addFields: {
+              // Convert each menuItemId in the array to ObjectId
+              menuItemIds: {
+                  $map: {
+                      input: '$menuItemIds',
+                      as: 'menuItemId',
+                      in: { $toObjectId: '$$menuItemId' }
+                  }
+              }
+          }
+      },
+      {
+          $unwind: '$menuItemIds' // Unwind the converted ObjectIds
+      },
+      {
+          $lookup: {
+              from: 'menu',
+              localField: 'menuItemIds',  // Field in paymentCollection to match (now ObjectId)
+              foreignField: '_id',        // ObjectId field in menu collection to match
+              as: 'menuItems'
+          }
+      },
+      {
+        $unwind: '$menuItems'
+      },
+      {
+        $group: {
+          _id: '$menuItems.category',
+          quantity: { $sum: 1 },
+          revenue: { $sum: "$menuItems.price"}
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          category: '$_id',
+          quantity: '$quantity',
+          revenue: '$revenue'
+        }
+      }
+
+      ]).toArray()
+
+      res.send(result);
+
     })
+
+
 
 
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ping: 1});
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    // console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
